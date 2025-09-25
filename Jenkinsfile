@@ -1,7 +1,7 @@
 pipeline {
     agent any
     environment {
-        GIT_REPO        = "https://github.com/himanshu085/employee_api.git"
+        GIT_REPO        = "https://github.com/himanshu085/employee_api_eks.git"
         GIT_CRED        = "git-credential"
         DOCKER_IMAGE    = "employee-api:latest"
         DOCKER_REGISTRY = "himanshu085/employee-api"
