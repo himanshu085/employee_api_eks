@@ -6,8 +6,8 @@ pipeline {
         DOCKER_IMAGE    = "employee-api:latest"
         DOCKER_REGISTRY = "himanshu085/employee-api"
         DOCKER_CRED     = "docker-hub-credentials"
-        TERRAFORM_DIR   = "terraform/eks"
         NETWORK_DIR     = "terraform/network"
+        TERRAFORM_DIR   = "terraform/eks"
         K8S_DIR         = "k8s"
         CLUSTER_VERSION = "1.27"
         AWS_REGION      = "us-east-1"
@@ -45,18 +45,18 @@ pipeline {
                 script {
                     echo "Building & pushing Docker image..."
                     withCredentials([usernamePassword(credentialsId: "${DOCKER_CRED}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh '''
+                        sh """
                             echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                             docker build -t ${DOCKER_IMAGE} .
                             docker tag ${DOCKER_IMAGE} ${DOCKER_REGISTRY}:${BUILD_NUMBER}
                             docker push ${DOCKER_REGISTRY}:${BUILD_NUMBER}
-                        '''
+                        """
                     }
                 }
             }
         }
 
-        stage('Get Network Outputs') {
+        stage('Apply Network Module') {
             steps {
                 withCredentials([
                     string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
@@ -67,44 +67,44 @@ pipeline {
                             export AWS_DEFAULT_REGION=${AWS_REGION}
                             terraform init
                             terraform apply -var-file=terraform.tfvars -auto-approve
-                            terraform output -raw vpc_id > ../vpc_id.txt
-                            terraform output -json private_subnets > ../private_subnets.json
-                            terraform output -json public_subnets > ../public_subnets.json
+                        """
+                        sh """
+                            terraform output -raw vpc_id > ../../vpc_id.txt
+                            terraform output -json private_subnets > ../../private_subnets.json
+                            terraform output -json public_subnets > ../../public_subnets.json
                         """
                     }
                 }
             }
         }
 
-        stage('Provision EKS with Terraform') {
+        stage('Apply EKS Module') {
             steps {
-                withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
-                    script {
-                        // Read network outputs
-                        def vpcId = readFile('vpc_id.txt').trim()
-                        def privateSubs = readFile('private_subnets.json').trim()
-                        def publicSubs  = readFile('public_subnets.json').trim()
+                script {
+                    def vpcId       = readFile('vpc_id.txt').trim()
+                    def privateSubs = readFile('private_subnets.json').trim()
+                    def publicSubs  = readFile('public_subnets.json').trim()
 
+                    withCredentials([
+                        string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
                         dir("${TERRAFORM_DIR}") {
-                            // Write terraform.tfvars for EKS module
                             writeFile file: 'terraform.tfvars', text: """
-cluster_name = "employee-eks"
+cluster_name    = "employee-eks"
 cluster_version = "${CLUSTER_VERSION}"
-vpc_id = "${vpcId}"
+vpc_id          = "${vpcId}"
 private_subnets = ${privateSubs}
-public_subnets = ${publicSubs}
-app_image = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
+public_subnets  = ${publicSubs}
+app_image       = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 """
                             sh """
                                 export AWS_DEFAULT_REGION=${AWS_REGION}
                                 terraform init
                                 terraform plan -var-file=terraform.tfvars -out=tfplan
                                 terraform apply -auto-approve tfplan
-                                terraform output -raw cluster_name > ../cluster_name.txt
-                                terraform output -raw cluster_endpoint > ../cluster_endpoint.txt
+                                terraform output -raw cluster_name > ../../cluster_name.txt
+                                terraform output -raw cluster_endpoint > ../../cluster_endpoint.txt
                             """
                         }
                     }
@@ -122,8 +122,6 @@ app_image = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                         def clusterName = readFile('cluster_name.txt').trim()
                         sh """
                             aws eks --region ${AWS_REGION} update-kubeconfig --name ${clusterName}
-                            # Replace Docker image in deployment.yaml dynamically
-                            sed -i 's|image:.*|image: ${DOCKER_REGISTRY}:${BUILD_NUMBER}|' ${K8S_DIR}/deployment.yaml
                             kubectl apply -f ${K8S_DIR}/deployment.yaml
                             kubectl apply -f ${K8S_DIR}/service.yaml
                             kubectl apply -f ${K8S_DIR}/ingress.yaml || true
