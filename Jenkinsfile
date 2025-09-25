@@ -65,6 +65,8 @@ pipeline {
                     dir("${NETWORK_DIR}") {
                         sh """
                             export AWS_DEFAULT_REGION=${AWS_REGION}
+                            terraform init
+                            terraform apply -var-file=terraform.tfvars -auto-approve
                             terraform output -raw vpc_id > ../vpc_id.txt
                             terraform output -json private_subnets > ../private_subnets.json
                             terraform output -json public_subnets > ../public_subnets.json
@@ -81,11 +83,13 @@ pipeline {
                     string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
                     script {
-                        def vpcId = readFile('../vpc_id.txt').trim()
-                        def privateSubs = readFile('../private_subnets.json').trim()
-                        def publicSubs  = readFile('../public_subnets.json').trim()
+                        // Read network outputs
+                        def vpcId = readFile('vpc_id.txt').trim()
+                        def privateSubs = readFile('private_subnets.json').trim()
+                        def publicSubs  = readFile('public_subnets.json').trim()
 
                         dir("${TERRAFORM_DIR}") {
+                            // Write terraform.tfvars for EKS module
                             writeFile file: 'terraform.tfvars', text: """
 cluster_name = "employee-eks"
 cluster_version = "${CLUSTER_VERSION}"
@@ -97,7 +101,7 @@ app_image = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             sh """
                                 export AWS_DEFAULT_REGION=${AWS_REGION}
                                 terraform init
-                                terraform plan -out=tfplan
+                                terraform plan -var-file=terraform.tfvars -out=tfplan
                                 terraform apply -auto-approve tfplan
                                 terraform output -raw cluster_name > ../cluster_name.txt
                                 terraform output -raw cluster_endpoint > ../cluster_endpoint.txt
@@ -118,6 +122,8 @@ app_image = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                         def clusterName = readFile('cluster_name.txt').trim()
                         sh """
                             aws eks --region ${AWS_REGION} update-kubeconfig --name ${clusterName}
+                            # Replace Docker image in deployment.yaml dynamically
+                            sed -i 's|image:.*|image: ${DOCKER_REGISTRY}:${BUILD_NUMBER}|' ${K8S_DIR}/deployment.yaml
                             kubectl apply -f ${K8S_DIR}/deployment.yaml
                             kubectl apply -f ${K8S_DIR}/service.yaml
                             kubectl apply -f ${K8S_DIR}/ingress.yaml || true
