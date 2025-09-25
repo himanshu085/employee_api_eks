@@ -1,19 +1,19 @@
-variable "region" {
-  type    = string
-  default = "us-east-1"
+variable "cluster_name" {
+  description = "EKS Cluster Name"
+  type        = string
 }
 
-variable "cluster_name" {
-  type    = string
-  default = "employee-eks"
+variable "cluster_version" {
+  description = "Kubernetes version"
+  type        = string
 }
 
 variable "vpc_id" {
-  description = "VPC ID where EKS will run"
+  description = "VPC ID where EKS cluster will be deployed"
   type        = string
 }
 
 variable "private_subnets" {
-  description = "Private subnets for worker nodes"
+  description = "List of private subnet IDs"
   type        = list(string)
 }

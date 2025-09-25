@@ -1,65 +1,35 @@
-variable "aws_region" {
-  type    = string
-  default = "us-east-1"
-}
-
-variable "project" {
-  type    = string
-  default = "otms"
-}
-
 variable "environment" {
-  type    = string
-  default = "dev"
+  description = "Environment name"
+  type        = string
+  default     = "dev"
 }
 
 variable "vpc_cidr" {
-  type    = string
-  default = "10.10.0.0/16"
-}
-
-variable "public_subnet_cidr_a" {
-  type    = string
-  default = "10.10.1.0/24"
-}
-
-variable "public_subnet_cidr_b" {
-  type    = string
-  default = "10.10.2.0/24"
-}
-
-variable "private_subnet_cidr_a" {
-  type    = string
-  default = "10.10.3.0/24"
-}
-
-variable "private_subnet_cidr_b" {
-  type    = string
-  default = "10.10.4.0/24"
-}
-
-variable "app_instance_type" {
-  type    = string
-  default = "t3.medium"
-}
-
-variable "scylla_instance_type" {
-  type    = string
-  default = "t3.small"
-}
-
-variable "redis_instance_type" {
-  type    = string
-  default = "t3.small"
-}
-
-variable "app_image" {
+  description = "VPC CIDR"
   type        = string
-  description = "Container image"
-  default     = "employee-api:latest"
+  default     = "10.0.0.0/16"
 }
 
-variable "private_key_path" {
+variable "public_subnet_cidrs" {
+  description = "List of public subnet CIDRs"
+  type        = list(string)
+  default     = ["10.0.1.0/24", "10.0.2.0/24"]
+}
+
+variable "private_subnet_cidrs" {
+  description = "List of private subnet CIDRs"
+  type        = list(string)
+  default     = ["10.0.101.0/24", "10.0.102.0/24"]
+}
+
+variable "cluster_name" {
+  description = "EKS Cluster Name"
   type        = string
-  description = "Path to SSH private key"
+  default     = "employee-eks"
+}
+
+variable "cluster_version" {
+  description = "Kubernetes version"
+  type        = string
+  default     = "1.28"
 }
