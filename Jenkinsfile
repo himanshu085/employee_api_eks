@@ -12,7 +12,9 @@ pipeline {
         CLUSTER_VERSION = "1.27"
         AWS_REGION      = "us-east-1"
     }
+
     stages {
+
         stage('Checkout Code') {
             steps {
                 echo "Cloning Employee API repository..."
@@ -45,12 +47,12 @@ pipeline {
                 script {
                     echo "Building & pushing Docker image..."
                     withCredentials([usernamePassword(credentialsId: "${DOCKER_CRED}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh """
+                        sh '''
                             echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                             docker build -t ${DOCKER_IMAGE} .
                             docker tag ${DOCKER_IMAGE} ${DOCKER_REGISTRY}:${BUILD_NUMBER}
                             docker push ${DOCKER_REGISTRY}:${BUILD_NUMBER}
-                        """
+                        '''
                     }
                 }
             }
@@ -66,7 +68,7 @@ pipeline {
                         sh """
                             export AWS_DEFAULT_REGION=${AWS_REGION}
                             terraform init
-                            terraform apply -var-file=terraform.tfvars -auto-approve
+                            terraform apply -auto-approve
                         """
                         sh """
                             terraform output -raw vpc_id > ../../vpc_id.txt
@@ -81,6 +83,7 @@ pipeline {
         stage('Apply EKS Module') {
             steps {
                 script {
+                    // Read network outputs
                     def vpcId       = readFile('vpc_id.txt').trim()
                     def privateSubs = readFile('private_subnets.json').trim()
                     def publicSubs  = readFile('public_subnets.json').trim()
@@ -90,6 +93,7 @@ pipeline {
                         string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
                         dir("${TERRAFORM_DIR}") {
+                            // Dynamically create terraform.tfvars
                             writeFile file: 'terraform.tfvars', text: """
 cluster_name    = "employee-eks"
 cluster_version = "${CLUSTER_VERSION}"
