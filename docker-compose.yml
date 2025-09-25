@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  # Migration service (runs once, applies keyspace + schema)
+  migrate:
+    image: cassandra:4.1
+    container_name: migrate
+    volumes:
+      - ./migrations:/migrations
+    entrypoint: /bin/bash
+    command: |
+      -c "
+      echo 'Waiting for Scylla...'
+      until cqlsh ${SCYLLA_HOST} -e 'DESCRIBE KEYSPACES' > /dev/null 2>&1; do
+        echo 'Scylla not ready, retrying...'
+        sleep 5
+      done
+      echo 'Creating keyspace if missing...'
+      cqlsh ${SCYLLA_HOST} -e \"
+        CREATE KEYSPACE IF NOT EXISTS employee_db
+        WITH replication = {'class':'SimpleStrategy','replication_factor':1'};
+      \"
+      echo 'Running migrations...'
+      for f in /migrations/*.cql; do
+        [ -e \"$f\" ] || continue
+        echo \"Applying $f...\"
+        cqlsh ${SCYLLA_HOST} -f \"$f\"
+      done
+      echo 'Migrations completed.'
+      "
+    restart: "on-failure"
+    environment:
+      SCYLLA_HOST: "${SCYLLA_HOST}"   # pass external host via env
+
+  employee-api:
+    build: .
+    container_name: employee_api
+    depends_on:
+      - migrate
+    ports:
+      - "8080:8080"
+    environment:
+      SCYLLA_HOST: "${SCYLLA_HOST}"
+      SCYLLA_PORT: "9042"
+      SCYLLA_KEYSPACE: "employee_db"
+      REDIS_HOST: "${REDIS_HOST}"
+      REDIS_PORT: "6379"

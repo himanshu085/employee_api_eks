@@ -1,0 +1,11 @@
+scylladb:
+  host: ["scylla:9042"]
+  username: scylladb
+  password: password
+  keyspace: employee_db
+
+redis:
+  enabled: true
+  host: redis:6379
+  password: password
+  database: 0
