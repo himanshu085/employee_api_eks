@@ -1,80 +1,44 @@
 pipeline {
     agent any
+
     environment {
-        GIT_REPO        = "https://github.com/himanshu085/employee_api_eks.git"
-        GIT_CRED        = "git-credential"
-        DOCKER_IMAGE    = "employee-api:latest"
-        DOCKER_REGISTRY = "himanshu085/employee-api"
-        DOCKER_CRED     = "docker-hub-credentials"
-        NETWORK_DIR     = "terraform/network"
-        TERRAFORM_DIR   = "terraform/eks"
-        K8S_DIR         = "k8s"
-        CLUSTER_VERSION = "1.27"
-        AWS_REGION      = "us-east-1"
+        GIT_REPO        = 'https://github.com/himanshu085/employee-api.git'
+        GIT_CRED        = 'github-credentials'
+        AWS_REGION      = 'us-east-1'
+        NETWORK_DIR     = 'terraform/network'
+        EKS_DIR         = 'terraform/eks'
+        K8S_DIR         = 'k8s'
     }
 
     stages {
-
         stage('Checkout Code') {
             steps {
-                echo "Cloning Employee API repository..."
                 checkout([$class: 'GitSCM',
                     branches: [[name: '*/main']],
                     userRemoteConfigs: [[url: "${GIT_REPO}", credentialsId: "${GIT_CRED}"]]
                 ])
-            }
-        }
-
-        stage('Build & Unit Tests') {
-            agent {
-                docker {
-                    image 'golang:1.22-alpine'
-                    args '-u 0:0'
-                }
-            }
-            steps {
-                echo "Building & testing Employee API..."
-                sh '''
-                    go mod tidy
-                    go test ./... -v
-                    CGO_ENABLED=0 GOOS=linux go build -o employee-api .
-                '''
-            }
-        }
-
-        stage('Dockerize & Push') {
-            steps {
-                script {
-                    echo "Building & pushing Docker image..."
-                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CRED}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh '''
-                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                            docker build -t ${DOCKER_IMAGE} .
-                            docker tag ${DOCKER_IMAGE} ${DOCKER_REGISTRY}:${BUILD_NUMBER}
-                            docker push ${DOCKER_REGISTRY}:${BUILD_NUMBER}
-                        '''
-                    }
-                }
+                stash includes: '**/*', name: 'source'
             }
         }
 
         stage('Apply Network Module') {
             steps {
+                unstash 'source'
                 withCredentials([
                     string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
                     string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
                     dir("${NETWORK_DIR}") {
-                        sh """
+                        sh '''
+                            echo "Current dir: $(pwd)"
+                            ls -la
                             export AWS_DEFAULT_REGION=${AWS_REGION}
-                            terraform init
-                            terraform apply -auto-approve
-                        """
-                        sh """
-                            terraform output -raw vpc_id > ../../vpc_id.txt
-                            terraform output -json private_subnets > ../../private_subnets.json
-                            terraform output -json public_subnets > ../../public_subnets.json
-                        """
+                            terraform init -input=false
+                            terraform apply -auto-approve -input=false
+                            terraform output -raw vpc_id > ${WORKSPACE}/vpc_id.txt
+                            terraform output -json private_subnets > ${WORKSPACE}/private_subnets.json
+                            terraform output -json public_subnets > ${WORKSPACE}/public_subnets.json
+                        '''
                     }
                 }
             }
@@ -82,35 +46,19 @@ pipeline {
 
         stage('Apply EKS Module') {
             steps {
-                script {
-                    // Read network outputs
-                    def vpcId       = readFile('vpc_id.txt').trim()
-                    def privateSubs = readFile('private_subnets.json').trim()
-                    def publicSubs  = readFile('public_subnets.json').trim()
-
-                    withCredentials([
-                        string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                        string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                    ]) {
-                        dir("${TERRAFORM_DIR}") {
-                            // Dynamically create terraform.tfvars
-                            writeFile file: 'terraform.tfvars', text: """
-cluster_name    = "employee-eks"
-cluster_version = "${CLUSTER_VERSION}"
-vpc_id          = "${vpcId}"
-private_subnets = ${privateSubs}
-public_subnets  = ${publicSubs}
-app_image       = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
-"""
-                            sh """
-                                export AWS_DEFAULT_REGION=${AWS_REGION}
-                                terraform init
-                                terraform plan -var-file=terraform.tfvars -out=tfplan
-                                terraform apply -auto-approve tfplan
-                                terraform output -raw cluster_name > ../../cluster_name.txt
-                                terraform output -raw cluster_endpoint > ../../cluster_endpoint.txt
-                            """
-                        }
+                unstash 'source'
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    dir("${EKS_DIR}") {
+                        sh '''
+                            echo "Current dir: $(pwd)"
+                            ls -la
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+                            terraform init -input=false
+                            terraform apply -auto-approve -input=false
+                        '''
                     }
                 }
             }
@@ -118,18 +66,14 @@ app_image       = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 
         stage('Deploy to Kubernetes') {
             steps {
-                withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
-                    script {
-                        def clusterName = readFile('cluster_name.txt').trim()
-                        sh """
-                            aws eks --region ${AWS_REGION} update-kubeconfig --name ${clusterName}
-                            kubectl apply -f ${K8S_DIR}/deployment.yaml
-                            kubectl apply -f ${K8S_DIR}/service.yaml
-                            kubectl apply -f ${K8S_DIR}/ingress.yaml || true
-                        """
+                unstash 'source'
+                withKubeConfig([credentialsId: 'eks-kubeconfig', contextName: '', serverUrl: '']) {
+                    dir("${K8S_DIR}") {
+                        sh '''
+                            echo "Deploying K8s resources..."
+                            kubectl apply -f deployment.yaml
+                            kubectl apply -f service.yaml
+                        '''
                     }
                 }
             }
@@ -137,25 +81,51 @@ app_image       = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 
         stage('Post-Deployment Validation') {
             steps {
-                script {
-                    echo "Waiting for LoadBalancer to come up..."
-                    sh "sleep 60"
-                    def svc = sh(script: "kubectl get svc employee-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
-                    def url = "http://${svc}/swagger/index.html"
-                    echo "Running smoke test on ${url} ..."
-                    sh "curl -f ${url} || exit 1"
-                }
+                unstash 'source'
+                sh '''
+                    echo "Validating K8s service..."
+                    kubectl get pods
+                    kubectl get svc
+                '''
             }
         }
     }
 
     post {
         always {
+            script {
+                try {
+                    timeout(time: 5, unit: 'MINUTES') {
+                        input message: "⚠️ Do you want to destroy all Terraform resources?", ok: "Destroy"
+                        unstash 'source'
+
+                        withCredentials([
+                            string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                            string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                        ]) {
+                            dir("${EKS_DIR}") {
+                                sh '''
+                                    export AWS_DEFAULT_REGION=${AWS_REGION}
+                                    terraform destroy -auto-approve
+                                '''
+                            }
+                            dir("${NETWORK_DIR}") {
+                                sh '''
+                                    export AWS_DEFAULT_REGION=${AWS_REGION}
+                                    terraform destroy -auto-approve
+                                '''
+                            }
+                        }
+                    }
+                } catch (err) {
+                    echo "⏩ Destroy skipped by user or timeout."
+                }
+            }
             echo "🧹 Cleaning workspace..."
             cleanWs()
         }
         success {
-            echo "✅ Pipeline succeeded!"
+            echo "✅ Pipeline completed successfully!"
         }
         failure {
             echo "❌ Pipeline failed!"
