@@ -1,38 +1,38 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-name: employee-api
-labels:
-app: employee-api
+  name: employee-api
+  labels:
+    app: employee-api
 spec:
-replicas: 2
-selector:
-matchLabels:
-app: employee-api
-template:
-metadata:
-labels:
-app: employee-api
-spec:
-containers:
-- name: employee-api
-image: himanshu085/employee_service:latest # placeholder, Jenkins will patch image to build tag
-ports:
-- containerPort: 8080
-env:
-- name: SCYLLA_HOST
-value: "scylla-service"
-- name: SCYLLA_PORT
-value: "9042"
-- name: SCYLLA_KEYSPACE
-value: "employee_db"
-- name: REDIS_HOST
-value: "redis-service"
-- name: REDIS_PORT
-value: "6379"
-readinessProbe:
-httpGet:
-path: /api/v1/employee/health
-port: 8080
-initialDelaySeconds: 8
-periodSeconds: 10
+  replicas: 2
+  selector:
+    matchLabels:
+      app: employee-api
+  template:
+    metadata:
+      labels:
+        app: employee-api
+    spec:
+      containers:
+        - name: employee-api
+          image: himanshu085/employee-service:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SCYLLA_HOST
+              value: "scylla-service"
+            - name: SCYLLA_PORT
+              value: "9042"
+            - name: SCYLLA_KEYSPACE
+              value: "employee_db"
+            - name: REDIS_HOST
+              value: "redis-service"
+            - name: REDIS_PORT
+              value: "6379"
+          readinessProbe:
+            httpGet:
+              path: /api/v1/employee/health
+              port: 8080
+            initialDelaySeconds: 8
+            periodSeconds: 10
