@@ -1,6 +1,5 @@
 pipeline {
     agent any
-
     environment {
         GIT_REPO        = "https://github.com/himanshu085/employee_api_eks.git"
         GIT_CRED        = "git-credential"
@@ -14,6 +13,7 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout Code') {
             steps {
                 echo "📥 Cloning Employee API repository..."
@@ -78,12 +78,6 @@ pipeline {
                         string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
                         dir("${TERRAFORM_DIR}") {
-                            // Create terraform.tfvars dynamically
-                            writeFile file: 'terraform.tfvars', text: """
-cluster_name    = "employee-eks"
-cluster_version = "${CLUSTER_VERSION}"
-app_image       = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
-"""
                             sh """
                                 export AWS_DEFAULT_REGION=${AWS_REGION}
                                 terraform init
@@ -134,7 +128,7 @@ app_image       = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
     post {
         always {
             script {
-                // ✅ Destroy prompt always (success or failure)
+                // ✅ Always prompt for destroy
                 timeout(time: 5, unit: 'MINUTES') {
                     input message: "⚠️ Do you want to destroy all Terraform resources?", ok: "Destroy"
                     withCredentials([
@@ -144,7 +138,7 @@ app_image       = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                         dir("${TERRAFORM_DIR}") {
                             sh """
                                 export AWS_DEFAULT_REGION=${AWS_REGION}
-                                terraform init -reconfigure
+                                terraform init
                                 terraform destroy -auto-approve -var-file=terraform.tfvars || true
                             """
                         }
