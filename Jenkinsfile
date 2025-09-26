@@ -84,6 +84,7 @@ pipeline {
                         string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
                         dir("${TERRAFORM_DIR}") {
+                            // Generate terraform.tfvars dynamically
                             writeFile file: 'terraform.tfvars', text: """
 environment          = "dev"
 vpc_cidr             = "10.0.0.0/16"
@@ -99,6 +100,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                                 terraform plan -var-file=terraform.tfvars -out=tfplan
                                 terraform apply -auto-approve tfplan
                                 terraform output -raw eks_cluster_name > ../cluster_name.txt
+                                terraform output -raw alb_dns > ../alb_dns.txt || true
                             """
                         }
                     }
@@ -136,6 +138,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             kubectl apply -f ${K8S_DIR}/deployment.yaml
                             kubectl apply -f ${K8S_DIR}/service.yaml
                             kubectl apply -f ${K8S_DIR}/ingress.yaml || true
+
                             echo "⏳ Waiting for pods to be ready..."
                             kubectl wait --for=condition=ready pod -l app=employee-api --timeout=180s
                         """
@@ -145,28 +148,22 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
         }
 
         stage('Post-Deployment Validation') {
-            steps {
-                agent {
-                    docker {
-                        image 'bitnami/kubectl:latest'
-                        args '-u 0:0'
-                    }
+            agent {
+                docker {
+                    image 'bitnami/kubectl:latest'
+                    args '-u 0:0'
                 }
-                steps {
-                    script {
-                        echo "🚀 Fetching LoadBalancer hostname dynamically..."
-                        def svc = sh(
-                            script: "kubectl get svc employee-api-svc -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'",
-                            returnStdout: true
-                        ).trim()
-                        def url = "http://${svc}/swagger/index.html"
-                        echo "🚀 Running smoke test on ${url} ..."
-                        sh """
-                            for i in {1..6}; do
-                                curl -f ${url} && break || sleep 10
-                            done
-                        """
-                    }
+            }
+            steps {
+                script {
+                    echo "🚀 Running post-deployment smoke test..."
+                    def albDns = readFile('alb_dns.txt').trim()
+                    def url = "http://${albDns}/swagger/index.html"
+                    sh """
+                        for i in {1..6}; do
+                            curl -f ${url} && break || sleep 10
+                        done
+                    """
                 }
             }
         }
