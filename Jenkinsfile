@@ -100,6 +100,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                                 terraform plan -var-file=terraform.tfvars -out=tfplan
                                 terraform apply -auto-approve tfplan
                                 terraform output -raw eks_cluster_name > ../cluster_name.txt
+                                terraform output -raw alb_dns > ../alb_dns.txt
                             """
                         }
                     }
@@ -149,10 +150,14 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
         stage('Post-Deployment Validation') {
             steps {
                 script {
-                    def svc = sh(script: "kubectl get svc employee-api-svc -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
-                    def url = "http://${svc}/swagger/index.html"
+                    def albDns = readFile('alb_dns.txt').trim()
+                    def url = "http://${albDns}/swagger/index.html"
                     echo "🚀 Running smoke test on ${url} ..."
-                    sh "curl -f ${url} || exit 1"
+                    sh """
+                        for i in {1..6}; do
+                            curl -f ${url} && break || sleep 10
+                        done
+                    """
                 }
             }
         }
