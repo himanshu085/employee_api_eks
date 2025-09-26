@@ -17,3 +17,8 @@ variable "private_subnets" {
   description = "List of private subnet IDs"
   type        = list(string)
 }
+
+variable "app_image" {
+  description = "Docker image for Employee API"
+  type        = string
+}
