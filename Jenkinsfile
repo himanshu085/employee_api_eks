@@ -59,34 +59,39 @@ pipeline {
 
         stage('Terraform Validate') {
             steps {
-                dir("${TERRAFORM_DIR}") {
-                    sh """
-                        echo "🔍 Running Terraform validation..."
-                        terraform init -backend=false
-                        terraform fmt -check
-                        terraform validate
-                    """
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    dir("${TERRAFORM_DIR}") {
+                        sh """
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+                            echo "🔍 Running Terraform validation..."
+                            terraform init -backend=false
+                            terraform fmt -check
+                            terraform validate
+                        """
+                    }
                 }
             }
         }
 
         stage('Apply Terraform Infra') {
             steps {
-                script {
-                    withCredentials([
-                        string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                        string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                    ]) {
-                        dir("${TERRAFORM_DIR}") {
-                            sh """
-                                export AWS_DEFAULT_REGION=${AWS_REGION}
-                                terraform init
-                                terraform plan -var-file=terraform.tfvars -out=tfplan
-                                terraform apply -auto-approve tfplan
-                                terraform output -raw cluster_name > ../cluster_name.txt
-                                terraform output -raw cluster_endpoint > ../cluster_endpoint.txt
-                            """
-                        }
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    dir("${TERRAFORM_DIR}") {
+                        // Dynamically create terraform.tfvars if needed
+                        sh """
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+                            terraform init
+                            terraform plan -var-file=terraform.tfvars -out=tfplan
+                            terraform apply -auto-approve tfplan
+                            terraform output -raw cluster_name > ../cluster_name.txt
+                            terraform output -raw cluster_endpoint > ../cluster_endpoint.txt
+                        """
                     }
                 }
             }
@@ -128,7 +133,7 @@ pipeline {
     post {
         always {
             script {
-                // ✅ Always prompt for destroy
+                // Always prompt to destroy Terraform resources
                 timeout(time: 5, unit: 'MINUTES') {
                     input message: "⚠️ Do you want to destroy all Terraform resources?", ok: "Destroy"
                     withCredentials([
