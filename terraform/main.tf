@@ -10,6 +10,7 @@ module "eks" {
   source          = "./eks"
   cluster_name    = var.cluster_name
   cluster_version = var.cluster_version
+  app_image       = var.app_image
   vpc_id          = module.network.vpc_id
   private_subnets = module.network.private_subnets
 }
