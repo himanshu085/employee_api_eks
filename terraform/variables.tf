@@ -35,7 +35,6 @@ variable "cluster_version" {
 }
 
 variable "app_image" {
-  description = "Docker image for the Employee API app"
+  description = "Docker image for Employee API"
   type        = string
-  default     = ""
 }
