@@ -8,7 +8,7 @@ pipeline {
         DOCKER_CRED     = "docker-hub-credentials"
         TERRAFORM_DIR   = "terraform"
         K8S_DIR         = "k8s"
-        CLUSTER_VERSION = "1.28" // Match current EKS cluster version
+        CLUSTER_VERSION = "1.27"
         AWS_REGION      = "us-east-1"
     }
 
@@ -84,15 +84,15 @@ pipeline {
                         string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
                         dir("${TERRAFORM_DIR}") {
-                            // Write terraform.tfvars dynamically
+                            // Generate terraform.tfvars dynamically
                             writeFile file: 'terraform.tfvars', text: """
-environment       = "dev"
-vpc_cidr          = "10.0.0.0/16"
+environment          = "dev"
+vpc_cidr             = "10.0.0.0/16"
 public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
 private_subnet_cidrs = ["10.0.101.0/24", "10.0.102.0/24"]
-cluster_name      = "employee-eks"
-cluster_version   = "${CLUSTER_VERSION}"
-app_image         = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
+cluster_name         = "employee-eks"
+cluster_version      = "${CLUSTER_VERSION}"
+app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 """
                             sh """
                                 export AWS_DEFAULT_REGION=${AWS_REGION}
@@ -100,11 +100,23 @@ app_image         = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                                 terraform plan -var-file=terraform.tfvars -out=tfplan
                                 terraform apply -auto-approve tfplan
 
-                                terraform output -raw cluster_name > ../cluster_name.txt
+                                # Save correct output names
+                                terraform output -raw eks_cluster_name > ../cluster_name.txt
                                 terraform output -raw eks_cluster_endpoint > ../cluster_endpoint.txt
                             """
                         }
                     }
+                }
+            }
+        }
+
+        stage('Patch Deployment YAML') {
+            steps {
+                script {
+                    echo "✏️ Updating deployment.yaml with Docker build tag..."
+                    sh """
+                        sed -i "s|image: himanshu085/employee-service:latest|image: ${DOCKER_REGISTRY}:${BUILD_NUMBER}|g" ${K8S_DIR}/deployment.yaml
+                    """
                 }
             }
         }
@@ -133,7 +145,7 @@ app_image         = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                 script {
                     echo "⏳ Waiting for LoadBalancer to come up..."
                     sh "sleep 60"
-                    def svc = sh(script: "kubectl get svc employee-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
+                    def svc = sh(script: "kubectl get svc employee-api-svc -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
                     def url = "http://${svc}/swagger/index.html"
                     echo "🚀 Running smoke test on ${url} ..."
                     sh "curl -f ${url} || exit 1"
@@ -145,7 +157,6 @@ app_image         = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
     post {
         always {
             script {
-                // ✅ Always prompt for destroy
                 timeout(time: 5, unit: 'MINUTES') {
                     input message: "⚠️ Do you want to destroy all Terraform resources?", ok: "Destroy"
                     withCredentials([
@@ -165,11 +176,7 @@ app_image         = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
             echo "🧹 Cleaning workspace..."
             cleanWs()
         }
-        success {
-            echo "✅ Pipeline succeeded!"
-        }
-        failure {
-            echo "❌ Pipeline failed!"
-        }
+        success { echo "✅ Pipeline succeeded!" }
+        failure { echo "❌ Pipeline failed!" }
     }
 }
