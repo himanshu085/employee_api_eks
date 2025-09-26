@@ -17,8 +17,3 @@ output "eks_cluster_name" {
 output "eks_cluster_endpoint" {
   value = module.eks.cluster_endpoint
 }
-
-variable "app_image" {
-  description = "Docker image for the application"
-  type        = string
-}
