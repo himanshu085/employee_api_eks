@@ -19,5 +19,5 @@ output "eks_cluster_endpoint" {
 }
 
 output "employee_api_service_dns" {
-  value = kubernetes_service.employee_api.status[0].load_balancer[0].ingress[0].hostname
+  value = module.eks.employee_api_service_dns
 }
