@@ -99,10 +99,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                                 terraform init
                                 terraform plan -var-file=terraform.tfvars -out=tfplan
                                 terraform apply -auto-approve tfplan
-
-                                # Save correct output names
                                 terraform output -raw eks_cluster_name > ../cluster_name.txt
-                                terraform output -raw eks_cluster_endpoint > ../cluster_endpoint.txt
                             """
                         }
                     }
@@ -115,13 +112,19 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                 script {
                     echo "✏️ Updating deployment.yaml with Docker build tag..."
                     sh """
-                        sed -i "s|image: himanshu085/employee-service:latest|image: ${DOCKER_REGISTRY}:${BUILD_NUMBER}|g" ${K8S_DIR}/deployment.yaml
+                        sed -i "s|image: himanshu085/employee_service:latest|image: ${DOCKER_REGISTRY}:${BUILD_NUMBER}|g" ${K8S_DIR}/deployment.yaml
                     """
                 }
             }
         }
 
         stage('Deploy to Kubernetes') {
+            agent {
+                docker {
+                    image 'bitnami/kubectl:latest'
+                    args '-u 0:0'
+                }
+            }
             steps {
                 withCredentials([
                     string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
@@ -134,6 +137,9 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             kubectl apply -f ${K8S_DIR}/deployment.yaml
                             kubectl apply -f ${K8S_DIR}/service.yaml
                             kubectl apply -f ${K8S_DIR}/ingress.yaml || true
+
+                            echo "⏳ Waiting for pods to be ready..."
+                            kubectl wait --for=condition=ready pod -l app=employee-api --timeout=180s
                         """
                     }
                 }
@@ -143,8 +149,6 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
         stage('Post-Deployment Validation') {
             steps {
                 script {
-                    echo "⏳ Waiting for LoadBalancer to come up..."
-                    sh "sleep 60"
                     def svc = sh(script: "kubectl get svc employee-api-svc -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
                     def url = "http://${svc}/swagger/index.html"
                     echo "🚀 Running smoke test on ${url} ..."
@@ -157,20 +161,31 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
     post {
         always {
             script {
-                timeout(time: 5, unit: 'MINUTES') {
-                    input message: "⚠️ Do you want to destroy all Terraform resources?", ok: "Destroy"
-                    withCredentials([
-                        string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                        string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                    ]) {
-                        dir("${TERRAFORM_DIR}") {
-                            sh """
-                                export AWS_DEFAULT_REGION=${AWS_REGION}
-                                terraform init
-                                terraform destroy -auto-approve -var-file=terraform.tfvars || true
-                            """
+                try {
+                    def userChoice = input(
+                        id: 'DestroyApproval',
+                        message: "⚠️ Do you want to destroy all Terraform resources?",
+                        parameters: [choice(name: 'ACTION', choices: ['Destroy', 'Keep Infra'], description: 'Select action')]
+                    )
+                    if (userChoice == 'Destroy') {
+                        echo "⚡ Destroying Terraform-managed infrastructure..."
+                        withCredentials([
+                            string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                            string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                        ]) {
+                            dir("${TERRAFORM_DIR}") {
+                                sh """
+                                    export AWS_DEFAULT_REGION=${AWS_REGION}
+                                    terraform init
+                                    terraform destroy -auto-approve -var-file=terraform.tfvars || true
+                                """
+                            }
                         }
+                    } else {
+                        echo "✅ Keeping infrastructure as is."
                     }
+                } catch(err) {
+                    echo "⏩ Skipping destroy prompt."
                 }
             }
             echo "🧹 Cleaning workspace..."
