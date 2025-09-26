@@ -17,3 +17,7 @@ output "eks_cluster_name" {
 output "eks_cluster_endpoint" {
   value = module.eks.cluster_endpoint
 }
+
+output "employee_api_service_dns" {
+  value = kubernetes_service.employee_api.status[0].load_balancer[0].ingress[0].hostname
+}
