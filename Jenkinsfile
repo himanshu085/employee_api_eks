@@ -1,5 +1,6 @@
 pipeline {
     agent any
+
     environment {
         GIT_REPO        = "https://github.com/himanshu085/employee_api_eks.git"
         GIT_CRED        = "git-credential"
@@ -13,7 +14,6 @@ pipeline {
     }
 
     stages {
-
         stage('Checkout Code') {
             steps {
                 echo "📥 Cloning Employee API repository..."
@@ -134,7 +134,7 @@ app_image       = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
     post {
         always {
             script {
-                // ✅ Destroy prompt always
+                // ✅ Destroy prompt always (success or failure)
                 timeout(time: 5, unit: 'MINUTES') {
                     input message: "⚠️ Do you want to destroy all Terraform resources?", ok: "Destroy"
                     withCredentials([
@@ -144,6 +144,7 @@ app_image       = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                         dir("${TERRAFORM_DIR}") {
                             sh """
                                 export AWS_DEFAULT_REGION=${AWS_REGION}
+                                terraform init -reconfigure
                                 terraform destroy -auto-approve -var-file=terraform.tfvars || true
                             """
                         }
