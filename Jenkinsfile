@@ -78,20 +78,29 @@ pipeline {
 
         stage('Apply Terraform Infra') {
             steps {
-                withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
-                    dir("${TERRAFORM_DIR}") {
-                        // Dynamically create terraform.tfvars if needed
-                        sh """
-                            export AWS_DEFAULT_REGION=${AWS_REGION}
-                            terraform init
-                            terraform plan -var-file=terraform.tfvars -out=tfplan
-                            terraform apply -auto-approve tfplan
-                            terraform output -raw cluster_name > ../cluster_name.txt
-                            terraform output -raw cluster_endpoint > ../cluster_endpoint.txt
-                        """
+                script {
+                    withCredentials([
+                        string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
+                        dir("${TERRAFORM_DIR}") {
+                            // Create terraform.tfvars dynamically
+                            writeFile file: 'terraform.tfvars', text: """
+cluster_name    = "employee-eks"
+cluster_version = "${CLUSTER_VERSION}"
+app_image       = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
+"""
+                            sh """
+                                export AWS_DEFAULT_REGION=${AWS_REGION}
+                                terraform init
+                                terraform plan -var-file=terraform.tfvars -out=tfplan
+                                terraform apply -auto-approve tfplan
+
+                                # Correct output names
+                                terraform output -raw eks_cluster_name > ../cluster_name.txt
+                                terraform output -raw eks_cluster_endpoint > ../cluster_endpoint.txt
+                            """
+                        }
                     }
                 }
             }
@@ -133,7 +142,7 @@ pipeline {
     post {
         always {
             script {
-                // Always prompt to destroy Terraform resources
+                // ✅ Always prompt for destroy
                 timeout(time: 5, unit: 'MINUTES') {
                     input message: "⚠️ Do you want to destroy all Terraform resources?", ok: "Destroy"
                     withCredentials([
