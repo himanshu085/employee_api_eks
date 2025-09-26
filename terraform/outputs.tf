@@ -17,3 +17,8 @@ output "eks_cluster_name" {
 output "eks_cluster_endpoint" {
   value = module.eks.cluster_endpoint
 }
+
+output "alb_dns" {
+  value = aws_lb.app_alb.dns_name
+  description = "DNS name of the application load balancer"
+}
