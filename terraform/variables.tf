@@ -33,3 +33,9 @@ variable "cluster_version" {
   type        = string
   default     = "1.28"
 }
+
+variable "app_image" {
+  description = "Docker image for the Employee API app"
+  type        = string
+  default     = ""
+}
