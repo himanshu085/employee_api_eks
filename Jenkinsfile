@@ -8,7 +8,7 @@ pipeline {
         DOCKER_CRED     = "docker-hub-credentials"
         TERRAFORM_DIR   = "terraform"
         K8S_DIR         = "k8s"
-        CLUSTER_VERSION = "1.27"
+        CLUSTER_VERSION = "1.28"
         AWS_REGION      = "us-east-1"
     }
 
