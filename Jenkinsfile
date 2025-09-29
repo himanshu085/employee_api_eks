@@ -122,9 +122,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             export AWS_DEFAULT_REGION=${AWS_REGION}
                             terraform init
                             terraform apply -auto-approve -var-file=terraform.tfvars
-
                             terraform output -raw eks_cluster_name > ../cluster_name.txt
-                            terraform output -raw employee_api_service_dns > ../employee_api_service_dns.txt || true
                         """
                     }
                 }
@@ -142,23 +140,20 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 
         stage('Deploy to Kubernetes') {
             steps {
-                script {
-                    docker.image('amazon/aws-cli:2.15.38').inside('-u 0:0') {
-                        withCredentials([
-                            string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                            string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                        ]) {
-                            def clusterName = readFile('cluster_name.txt').trim()
-                            sh """
-                                aws eks --region ${AWS_REGION} update-kubeconfig --name ${clusterName}
-                                kubectl apply -f "${K8S_DIR}/deployment.yaml"
-                                kubectl apply -f "${K8S_DIR}/service.yaml"
-                                kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
-
-                                echo "⏳ Waiting for deployment rollout..."
-                                kubectl rollout status deployment/employee-api --timeout=180s
-                            """
-                        }
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    script {
+                        def clusterName = readFile('cluster_name.txt').trim()
+                        sh """
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+                            aws eks update-kubeconfig --name ${clusterName}
+                            kubectl apply -f "${K8S_DIR}/deployment.yaml"
+                            kubectl apply -f "${K8S_DIR}/service.yaml"
+                            kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
+                            kubectl rollout status deployment/employee-api --timeout=180s
+                        """
                     }
                 }
             }
@@ -167,42 +162,34 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
         stage('Post-Deployment Validation') {
             steps {
                 script {
-                    def serviceDns = ""
+                    def clusterName = readFile('cluster_name.txt').trim()
+                    withCredentials([
+                        string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
+                        sh "export AWS_DEFAULT_REGION=${AWS_REGION} && aws eks update-kubeconfig --name ${clusterName}"
 
-                    // Try Terraform output first
-                    if (fileExists('employee_api_service_dns.txt')) {
-                        serviceDns = readFile('employee_api_service_dns.txt').trim()
-                    }
+                        def serviceDns = sh(
+                            script: "kubectl get svc employee-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'",
+                            returnStdout: true
+                        ).trim()
 
-                    // Fetch from Kubernetes if not found
-                    if (!serviceDns) {
-                        echo "⚠️ Terraform output not found, fetching service DNS from Kubernetes..."
-                        docker.image('amazon/aws-cli:2.15.38').inside('-u 0:0') {
-                            withCredentials([
-                                string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                                string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                            ]) {
-                                def clusterName = readFile('cluster_name.txt').trim()
-                                sh "aws eks --region ${AWS_REGION} update-kubeconfig --name ${clusterName}"
-                                serviceDns = sh(script: "kubectl get svc employee-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
-                            }
+                        if (serviceDns) {
+                            def url = "http://${serviceDns}/swagger/index.html"
+                            echo "🚀 Running smoke test on ${url} ..."
+                            sh """
+                                for i in {1..6}; do
+                                    curl -sf ${url} && break || sleep 10
+                                done
+                            """
+                        } else {
+                            echo "⚠️ Employee API Service DNS not found, skipping smoke test."
                         }
-                    }
-
-                    if (serviceDns) {
-                        def url = "http://${serviceDns}/swagger/index.html"
-                        echo "🚀 Running smoke test on ${url} ..."
-                        sh """
-                            for i in {1..6}; do
-                                curl -sf ${url} && break || sleep 10
-                            done
-                        """
-                    } else {
-                        echo "⚠️ Employee API Service DNS not found, skipping smoke test."
                     }
                 }
             }
         }
+
     }
 
     post {
