@@ -16,6 +16,7 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout Code') {
             steps {
                 echo "📥 Cloning Employee API repository..."
@@ -59,6 +60,48 @@ pipeline {
             }
         }
 
+        stage('Pre-Check Existing Infra') {
+            steps {
+                script {
+                    def infraExists = false
+                    dir("${TERRAFORM_DIR}") {
+                        if (fileExists('terraform.tfstate')) {
+                            echo "⚠️ Existing Terraform state found!"
+                            infraExists = true
+                        }
+                    }
+
+                    if (infraExists) {
+                        def userChoice = input(
+                            id: 'InfraAction',
+                            message: "Existing infrastructure detected. What do you want to do?",
+                            parameters: [choice(name: 'ACTION', choices: ['Destroy & Fresh Deploy', 'Keep Existing Infra'], description: 'Select action')]
+                        )
+
+                        if (userChoice == 'Destroy & Fresh Deploy') {
+                            echo "⚡ Destroying existing Terraform infrastructure..."
+                            withCredentials([
+                                string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                                string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                            ]) {
+                                dir("${TERRAFORM_DIR}") {
+                                    sh """
+                                        export AWS_DEFAULT_REGION=${AWS_REGION}
+                                        terraform init
+                                        terraform destroy -auto-approve || true
+                                    """
+                                }
+                            }
+                        } else {
+                            echo "✅ Keeping existing infrastructure."
+                        }
+                    } else {
+                        echo "✅ No existing infrastructure detected, proceeding normally."
+                    }
+                }
+            }
+        }
+
         stage('Terraform Init & Apply') {
             steps {
                 withCredentials([
@@ -79,6 +122,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             export AWS_DEFAULT_REGION=${AWS_REGION}
                             terraform init
                             terraform apply -auto-approve -var-file=terraform.tfvars
+
                             terraform output -raw eks_cluster_name > ../cluster_name.txt
                             terraform output -raw employee_api_service_dns > ../employee_api_service_dns.txt || true
                         """
@@ -111,7 +155,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                                 kubectl apply -f "${K8S_DIR}/service.yaml"
                                 kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
 
-                                echo "⏳ Waiting for pods to be ready..."
+                                echo "⏳ Waiting for deployment rollout..."
                                 kubectl rollout status deployment/employee-api --timeout=180s
                             """
                         }
@@ -123,17 +167,36 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
         stage('Post-Deployment Validation') {
             steps {
                 script {
+                    def serviceDns = ""
+
+                    // Try Terraform output first
                     if (fileExists('employee_api_service_dns.txt')) {
-                        def serviceDns = readFile('employee_api_service_dns.txt').trim()
-                        if (serviceDns) {
-                            def url = "http://${serviceDns}/swagger/index.html"
-                            echo "🚀 Running smoke test on ${url} ..."
-                            sh """
-                                for i in {1..6}; do
-                                    curl -sf ${url} && break || sleep 10
-                                done
-                            """
+                        serviceDns = readFile('employee_api_service_dns.txt').trim()
+                    }
+
+                    // Fetch from Kubernetes if not found
+                    if (!serviceDns) {
+                        echo "⚠️ Terraform output not found, fetching service DNS from Kubernetes..."
+                        docker.image('amazon/aws-cli:2.15.38').inside('-u 0:0') {
+                            withCredentials([
+                                string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                                string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                            ]) {
+                                def clusterName = readFile('cluster_name.txt').trim()
+                                sh "aws eks --region ${AWS_REGION} update-kubeconfig --name ${clusterName}"
+                                serviceDns = sh(script: "kubectl get svc employee-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
+                            }
                         }
+                    }
+
+                    if (serviceDns) {
+                        def url = "http://${serviceDns}/swagger/index.html"
+                        echo "🚀 Running smoke test on ${url} ..."
+                        sh """
+                            for i in {1..6}; do
+                                curl -sf ${url} && break || sleep 10
+                            done
+                        """
                     } else {
                         echo "⚠️ Employee API Service DNS not found, skipping smoke test."
                     }
