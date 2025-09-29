@@ -141,7 +141,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    docker.image('bitnami/kubectl:latest').inside('--entrypoint=""') {
+                    docker.image('amazon/aws-cli:2.15.34').inside('--entrypoint=""') {
                         withCredentials([
                             string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
                             string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
@@ -149,10 +149,19 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             def clusterName = readFile('cluster_name.txt').trim()
                             sh """
                                 export AWS_DEFAULT_REGION=${AWS_REGION}
+                                echo "🔧 Configuring kubeconfig for cluster: ${clusterName}"
                                 aws eks update-kubeconfig --name ${clusterName}
+
+                                echo "📥 Installing kubectl..."
+                                curl -LO "https://dl.k8s.io/release/\$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                                chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
+
+                                echo "🚀 Deploying manifests to Kubernetes..."
                                 kubectl apply -f "${K8S_DIR}/deployment.yaml"
                                 kubectl apply -f "${K8S_DIR}/service.yaml"
                                 kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
+
+                                echo "⏳ Waiting for rollout..."
                                 kubectl rollout status deployment/employee-api --timeout=180s
                             """
                         }
@@ -164,7 +173,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
         stage('Post-Deployment Validation') {
             steps {
                 script {
-                    docker.image('bitnami/kubectl:latest').inside('--entrypoint=""') {
+                    docker.image('amazon/aws-cli:2.15.34').inside('--entrypoint=""') {
                         withCredentials([
                             string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
                             string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
@@ -173,7 +182,12 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             sh """
                                 export AWS_DEFAULT_REGION=${AWS_REGION}
                                 aws eks update-kubeconfig --name ${clusterName}
+
+                                echo "📥 Installing kubectl..."
+                                curl -LO "https://dl.k8s.io/release/\$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                                chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
                             """
+
                             def serviceDns = sh(script: "kubectl get svc employee-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
                             
                             if (serviceDns) {
