@@ -150,7 +150,8 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             sh """
                                 export AWS_DEFAULT_REGION=${AWS_REGION}
                                 echo "🔧 Configuring kubeconfig for cluster: ${clusterName}"
-                                aws eks update-kubeconfig --name ${clusterName}
+                                aws eks update-kubeconfig --name ${clusterName} --kubeconfig ./kubeconfig
+                                export KUBECONFIG=./kubeconfig
 
                                 echo "📥 Installing kubectl..."
                                 curl -LO "https://dl.k8s.io/release/\$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
@@ -181,7 +182,8 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             def clusterName = readFile('cluster_name.txt').trim()
                             sh """
                                 export AWS_DEFAULT_REGION=${AWS_REGION}
-                                aws eks update-kubeconfig --name ${clusterName}
+                                aws eks update-kubeconfig --name ${clusterName} --kubeconfig ./kubeconfig
+                                export KUBECONFIG=./kubeconfig
 
                                 echo "📥 Installing kubectl..."
                                 curl -LO "https://dl.k8s.io/release/\$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
