@@ -98,6 +98,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                                 terraform plan -var-file=terraform.tfvars -out=tfplan
                                 terraform apply -auto-approve tfplan
                                 terraform output -raw eks_cluster_name > ../cluster_name.txt
+                                terraform output -raw employee_api_service_dns > ../employee_api_service_dns.txt || true
                             """
                         }
                     }
@@ -127,24 +128,12 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             def clusterName = readFile('cluster_name.txt').trim()
                             sh """
                                 aws eks --region ${AWS_REGION} update-kubeconfig --name ${clusterName}
-                                kubectl apply -f ${K8S_DIR}/deployment.yaml
-                                kubectl apply -f ${K8S_DIR}/service.yaml
-                                kubectl apply -f ${K8S_DIR}/ingress.yaml || true
+                                kubectl apply -f "${K8S_DIR}/deployment.yaml"
+                                kubectl apply -f "${K8S_DIR}/service.yaml"
+                                kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
 
                                 echo "⏳ Waiting for pods to be ready..."
                                 kubectl wait --for=condition=ready pod -l app=employee-api --timeout=180s
-
-                                echo "⏳ Waiting for LoadBalancer hostname..."
-                                for i in {1..30}; do
-                                  dns=$(kubectl get svc employee-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-                                  if [ ! -z "$dns" ]; then
-                                    echo "$dns" > employee_api_service_dns.txt
-                                    echo "✅ Service is available at: http://$dns"
-                                    break
-                                  fi
-                                  echo "Still waiting for LB... ($i)"
-                                  sleep 10
-                                done
                             """
                         }
                     }
