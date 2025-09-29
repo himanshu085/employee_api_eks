@@ -12,9 +12,3 @@ output "node_group_name" {
   description = "EKS Node Group Name"
   value       = aws_eks_node_group.employee_nodes.node_group_name
 }
-
-output "employee_api_service_dns" {
-  description = "DNS name of Employee API Service"
-  value       = kubernetes_service.employee_api.status[0].load_balancer[0].ingress[0].hostname
-}
-
