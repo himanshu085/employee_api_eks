@@ -17,7 +17,3 @@ output "eks_cluster_name" {
 output "eks_cluster_endpoint" {
   value = module.eks.cluster_endpoint
 }
-
-output "employee_api_service_dns" {
-  value = module.eks.employee_api_service_dns
-}
