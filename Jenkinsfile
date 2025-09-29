@@ -140,20 +140,22 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 
         stage('Deploy to Kubernetes') {
             steps {
-                withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
-                    script {
-                        def clusterName = readFile('cluster_name.txt').trim()
-                        sh """
-                            export AWS_DEFAULT_REGION=${AWS_REGION}
-                            aws eks update-kubeconfig --name ${clusterName}
-                            kubectl apply -f "${K8S_DIR}/deployment.yaml"
-                            kubectl apply -f "${K8S_DIR}/service.yaml"
-                            kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
-                            kubectl rollout status deployment/employee-api --timeout=180s
-                        """
+                script {
+                    docker.image('bitnami/kubectl:1.28').inside {
+                        withCredentials([
+                            string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                            string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                        ]) {
+                            def clusterName = readFile('cluster_name.txt').trim()
+                            sh """
+                                export AWS_DEFAULT_REGION=${AWS_REGION}
+                                aws eks update-kubeconfig --name ${clusterName}
+                                kubectl apply -f "${K8S_DIR}/deployment.yaml"
+                                kubectl apply -f "${K8S_DIR}/service.yaml"
+                                kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
+                                kubectl rollout status deployment/employee-api --timeout=180s
+                            """
+                        }
                     }
                 }
             }
@@ -162,34 +164,34 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
         stage('Post-Deployment Validation') {
             steps {
                 script {
-                    def clusterName = readFile('cluster_name.txt').trim()
-                    withCredentials([
-                        string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                        string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                    ]) {
-                        sh "export AWS_DEFAULT_REGION=${AWS_REGION} && aws eks update-kubeconfig --name ${clusterName}"
-
-                        def serviceDns = sh(
-                            script: "kubectl get svc employee-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'",
-                            returnStdout: true
-                        ).trim()
-
-                        if (serviceDns) {
-                            def url = "http://${serviceDns}/swagger/index.html"
-                            echo "🚀 Running smoke test on ${url} ..."
+                    docker.image('bitnami/kubectl:1.28').inside {
+                        withCredentials([
+                            string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                            string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                        ]) {
+                            def clusterName = readFile('cluster_name.txt').trim()
                             sh """
-                                for i in {1..6}; do
-                                    curl -sf ${url} && break || sleep 10
-                                done
+                                export AWS_DEFAULT_REGION=${AWS_REGION}
+                                aws eks update-kubeconfig --name ${clusterName}
                             """
-                        } else {
-                            echo "⚠️ Employee API Service DNS not found, skipping smoke test."
+                            def serviceDns = sh(script: "kubectl get svc employee-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
+                            
+                            if (serviceDns) {
+                                def url = "http://${serviceDns}/swagger/index.html"
+                                echo "🚀 Running smoke test on ${url} ..."
+                                sh """
+                                    for i in {1..6}; do
+                                        curl -sf ${url} && break || sleep 10
+                                    done
+                                """
+                            } else {
+                                echo "⚠️ Employee API Service DNS not found, skipping smoke test."
+                            }
                         }
                     }
                 }
             }
         }
-
     }
 
     post {
