@@ -154,7 +154,8 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                                 export KUBECONFIG=./kubeconfig
 
                                 echo "📥 Installing kubectl..."
-                                curl -LO "https://dl.k8s.io/release/\$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                                KUBECTL_VERSION="v1.28.1"
+                                curl -L -o kubectl https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl
                                 chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
 
                                 echo "🚀 Deploying manifests to Kubernetes..."
@@ -186,7 +187,8 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                                 export KUBECONFIG=./kubeconfig
 
                                 echo "📥 Installing kubectl..."
-                                curl -LO "https://dl.k8s.io/release/\$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                                KUBECTL_VERSION="v1.28.1"
+                                curl -L -o kubectl https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl
                                 chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
                             """
 
