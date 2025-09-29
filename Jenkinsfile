@@ -141,7 +141,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    docker.image('bitnami/kubectl:1.28').inside {
+                    docker.image('bitnami/kubectl:1.25.6-debian-11-r0').inside {
                         withCredentials([
                             string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
                             string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
@@ -164,7 +164,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
         stage('Post-Deployment Validation') {
             steps {
                 script {
-                    docker.image('bitnami/kubectl:1.28').inside {
+                    docker.image('bitnami/kubectl:1.25.6-debian-11-r0').inside {
                         withCredentials([
                             string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
                             string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
