@@ -144,20 +144,22 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                     string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
                     string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
-                    def clusterName = readFile('cluster_name.txt').trim()
-                    sh """
-                        export AWS_DEFAULT_REGION=${AWS_REGION}
-                        echo "🔧 Configuring kubeconfig for cluster: ${clusterName}"
-                        aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
+                    script {
+                        def clusterName = readFile('cluster_name.txt').trim()
+                        sh """
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+                            echo "🔧 Configuring kubeconfig for cluster: ${clusterName}"
+                            aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
 
-                        echo "🚀 Deploying manifests to Kubernetes..."
-                        kubectl apply -f "${K8S_DIR}/deployment.yaml"
-                        kubectl apply -f "${K8S_DIR}/service.yaml"
-                        kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
+                            echo "🚀 Deploying manifests to Kubernetes..."
+                            kubectl apply -f "${K8S_DIR}/deployment.yaml"
+                            kubectl apply -f "${K8S_DIR}/service.yaml"
+                            kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
 
-                        echo "⏳ Waiting for rollout..."
-                        kubectl rollout status deployment/employee-api --timeout=180s
-                    """
+                            echo "⏳ Waiting for rollout..."
+                            kubectl rollout status deployment/employee-api --timeout=180s
+                        """
+                    }
                 }
             }
         }
@@ -168,18 +170,18 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                     string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
                     string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
-                    def clusterName = readFile('cluster_name.txt').trim()
-                    sh """
-                        export AWS_DEFAULT_REGION=${AWS_REGION}
-                        aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
-                    """
-
                     script {
+                        def clusterName = readFile('cluster_name.txt').trim()
+                        sh """
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+                            aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
+                        """
+
                         def serviceDns = sh(
                             script: "kubectl get svc employee-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'",
                             returnStdout: true
                         ).trim()
-                        
+
                         if (serviceDns) {
                             def url = "http://${serviceDns}/swagger/index.html"
                             echo "🚀 Running smoke test on ${url} ..."
