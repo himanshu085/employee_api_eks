@@ -140,71 +140,56 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 
         stage('Deploy to Kubernetes') {
             steps {
-                script {
-                    docker.image('amazon/aws-cli:2.15.34').inside('--entrypoint=""') {
-                        withCredentials([
-                            string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                            string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                        ]) {
-                            def clusterName = readFile('cluster_name.txt').trim()
-                            sh """
-                                export AWS_DEFAULT_REGION=${AWS_REGION}
-                                echo "🔧 Configuring kubeconfig for cluster: ${clusterName}"
-                                aws eks update-kubeconfig --name ${clusterName} --kubeconfig ./kubeconfig
-                                export KUBECONFIG=./kubeconfig
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    def clusterName = readFile('cluster_name.txt').trim()
+                    sh """
+                        export AWS_DEFAULT_REGION=${AWS_REGION}
+                        echo "🔧 Configuring kubeconfig for cluster: ${clusterName}"
+                        aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
 
-                                echo "📥 Installing kubectl..."
-                                KUBECTL_VERSION="v1.28.1"
-                                curl -L -o kubectl https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl
-                                chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
+                        echo "🚀 Deploying manifests to Kubernetes..."
+                        kubectl apply -f "${K8S_DIR}/deployment.yaml"
+                        kubectl apply -f "${K8S_DIR}/service.yaml"
+                        kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
 
-                                echo "🚀 Deploying manifests to Kubernetes..."
-                                kubectl apply -f "${K8S_DIR}/deployment.yaml"
-                                kubectl apply -f "${K8S_DIR}/service.yaml"
-                                kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
-
-                                echo "⏳ Waiting for rollout..."
-                                kubectl rollout status deployment/employee-api --timeout=180s
-                            """
-                        }
-                    }
+                        echo "⏳ Waiting for rollout..."
+                        kubectl rollout status deployment/employee-api --timeout=180s
+                    """
                 }
             }
         }
 
         stage('Post-Deployment Validation') {
             steps {
-                script {
-                    docker.image('amazon/aws-cli:2.15.34').inside('--entrypoint=""') {
-                        withCredentials([
-                            string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                            string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                        ]) {
-                            def clusterName = readFile('cluster_name.txt').trim()
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    def clusterName = readFile('cluster_name.txt').trim()
+                    sh """
+                        export AWS_DEFAULT_REGION=${AWS_REGION}
+                        aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
+                    """
+
+                    script {
+                        def serviceDns = sh(
+                            script: "kubectl get svc employee-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'",
+                            returnStdout: true
+                        ).trim()
+                        
+                        if (serviceDns) {
+                            def url = "http://${serviceDns}/swagger/index.html"
+                            echo "🚀 Running smoke test on ${url} ..."
                             sh """
-                                export AWS_DEFAULT_REGION=${AWS_REGION}
-                                aws eks update-kubeconfig --name ${clusterName} --kubeconfig ./kubeconfig
-                                export KUBECONFIG=./kubeconfig
-
-                                echo "📥 Installing kubectl..."
-                                KUBECTL_VERSION="v1.28.1"
-                                curl -L -o kubectl https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl
-                                chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
+                                for i in {1..6}; do
+                                    curl -sf ${url} && break || sleep 10
+                                done
                             """
-
-                            def serviceDns = sh(script: "kubectl get svc employee-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
-                            
-                            if (serviceDns) {
-                                def url = "http://${serviceDns}/swagger/index.html"
-                                echo "🚀 Running smoke test on ${url} ..."
-                                sh """
-                                    for i in {1..6}; do
-                                        curl -sf ${url} && break || sleep 10
-                                    done
-                                """
-                            } else {
-                                echo "⚠️ Employee API Service DNS not found, skipping smoke test."
-                            }
+                        } else {
+                            echo "⚠️ Employee API Service DNS not found, skipping smoke test."
                         }
                     }
                 }
