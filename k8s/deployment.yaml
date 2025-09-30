@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: employee-api
-          image: himanshu085/employee-service:latest
+          image: himanshu085/employee-api:48
           ports:
             - containerPort: 8080
           env:
@@ -34,5 +34,7 @@ spec:
             httpGet:
               path: /api/v1/employee/health
               port: 8080
-            initialDelaySeconds: 8
+            initialDelaySeconds: 20
             periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 5
