@@ -166,6 +166,34 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 
     post {
         always {
+            script {
+                try {
+                    def userChoice = input(
+                        id: 'DestroyApproval',
+                        message: "⚠️ Do you want to destroy all Terraform resources?",
+                        parameters: [choice(name: 'ACTION', choices: ['Destroy', 'Keep Infra'], description: 'Select action')]
+                    )
+                    if (userChoice == 'Destroy') {
+                        echo "⚡ Destroying Terraform-managed infrastructure..."
+                        withCredentials([
+                            string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                            string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                        ]) {
+                            dir("${TERRAFORM_DIR}") {
+                                sh """
+                                    export AWS_DEFAULT_REGION=${AWS_REGION}
+                                    terraform init
+                                    terraform destroy -auto-approve -var-file=terraform.tfvars || true
+                                """
+                            }
+                        }
+                    } else {
+                        echo "✅ Keeping infrastructure as is."
+                    }
+                } catch(err) {
+                    echo "⏩ Skipping destroy prompt."
+                }
+            }
             echo "🧹 Cleaning workspace..."
             cleanWs()
         }
