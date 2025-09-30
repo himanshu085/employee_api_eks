@@ -3,8 +3,7 @@ kind: Ingress
 metadata:
   name: employee-api-ingress
   annotations:
-    kubernetes.io/ingress.class: alb
-    alb.ingress.kubernetes.io/scheme: internet-facing
+    kubernetes.io/ingress.class: nginx   # Use Nginx Ingress Controller
 spec:
   rules:
     - http:
