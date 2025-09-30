@@ -157,7 +157,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
 
                             echo "⏳ Waiting for rollout..."
-                            kubectl rollout status deployment/employee-api --timeout=180s
+                            kubectl rollout status deployment/employee-api --timeout=300s
                         """
                     }
                 }
@@ -166,34 +166,19 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 
         stage('Post-Deployment Validation') {
             steps {
-                withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
-                    script {
-                        def clusterName = readFile('cluster_name.txt').trim()
-                        sh """
-                            export AWS_DEFAULT_REGION=${AWS_REGION}
-                            aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
-                        """
+                script {
+                    def clusterName = readFile('cluster_name.txt').trim()
+                    sh """
+                        export AWS_DEFAULT_REGION=${AWS_REGION}
+                        aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
+                    """
 
-                        def serviceDns = sh(
-                            script: "kubectl get svc employee-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'",
-                            returnStdout: true
-                        ).trim()
-
-                        if (serviceDns) {
-                            def url = "http://${serviceDns}/swagger/index.html"
-                            echo "🚀 Running smoke test on ${url} ..."
-                            sh """
-                                for i in {1..6}; do
-                                    curl -sf ${url} && break || sleep 10
-                                done
-                            """
-                        } else {
-                            echo "⚠️ Employee API Service DNS not found, skipping smoke test."
-                        }
-                    }
+                    echo "⏳ Port-forwarding Employee API for internal testing..."
+                    sh """
+                        kubectl port-forward svc/employee-api-svc 8080:80 &
+                        sleep 5
+                        curl -f http://localhost:8080/api/v1/employee/health
+                    """
                 }
             }
         }
