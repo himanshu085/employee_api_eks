@@ -4,11 +4,9 @@ pipeline {
     environment {
         GIT_REPO        = "https://github.com/himanshu085/employee_api_eks.git"
         GIT_CRED        = "git-credential"
-
         DOCKER_IMAGE    = "employee-api:latest"
         DOCKER_REGISTRY = "himanshu085/employee-api"
         DOCKER_CRED     = "docker-hub-credentials"
-
         TERRAFORM_DIR   = "terraform"
         K8S_DIR         = "k8s"
         CLUSTER_VERSION = "1.28"
@@ -60,48 +58,6 @@ pipeline {
             }
         }
 
-        stage('Pre-Check Existing Infra') {
-            steps {
-                script {
-                    def infraExists = false
-                    dir("${TERRAFORM_DIR}") {
-                        if (fileExists('terraform.tfstate')) {
-                            echo "⚠️ Existing Terraform state found!"
-                            infraExists = true
-                        }
-                    }
-
-                    if (infraExists) {
-                        def userChoice = input(
-                            id: 'InfraAction',
-                            message: "Existing infrastructure detected. What do you want to do?",
-                            parameters: [choice(name: 'ACTION', choices: ['Destroy & Fresh Deploy', 'Keep Existing Infra'], description: 'Select action')]
-                        )
-
-                        if (userChoice == 'Destroy & Fresh Deploy') {
-                            echo "⚡ Destroying existing Terraform infrastructure..."
-                            withCredentials([
-                                string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                                string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                            ]) {
-                                dir("${TERRAFORM_DIR}") {
-                                    sh """
-                                        export AWS_DEFAULT_REGION=${AWS_REGION}
-                                        terraform init
-                                        terraform destroy -auto-approve || true
-                                    """
-                                }
-                            }
-                        } else {
-                            echo "✅ Keeping existing infrastructure."
-                        }
-                    } else {
-                        echo "✅ No existing infrastructure detected, proceeding normally."
-                    }
-                }
-            }
-        }
-
         stage('Terraform Init & Apply') {
             steps {
                 withCredentials([
@@ -133,7 +89,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
             steps {
                 echo "✏️ Updating deployment.yaml with Docker build tag..."
                 sh """
-                    sed -i "s|image: himanshu085/employee_service:latest|image: ${DOCKER_REGISTRY}:${BUILD_NUMBER}|g" ${K8S_DIR}/deployment.yaml
+                    sed -i "s|image: himanshu085/employee-api:latest|image: ${DOCKER_REGISTRY}:${BUILD_NUMBER}|g" ${K8S_DIR}/deployment.yaml
                 """
             }
         }
@@ -158,6 +114,9 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 
                             echo "⏳ Waiting for rollout..."
                             kubectl rollout status deployment/employee-api --timeout=300s
+
+                            echo "✅ Ensuring pods are ready..."
+                            kubectl wait --for=condition=ready pod -l app=employee-api --timeout=300s
                         """
                     }
                 }
@@ -166,19 +125,40 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 
         stage('Post-Deployment Validation') {
             steps {
-                script {
-                    def clusterName = readFile('cluster_name.txt').trim()
-                    sh """
-                        export AWS_DEFAULT_REGION=${AWS_REGION}
-                        aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
-                    """
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    script {
+                        def clusterName = readFile('cluster_name.txt').trim()
+                        sh """
+                            export AWS_DEFAULT_REGION=${AWS_REGION}
+                            aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
+                        """
 
-                    echo "⏳ Port-forwarding Employee API for internal testing..."
-                    sh """
-                        kubectl port-forward svc/employee-api-svc 8080:80 &
-                        sleep 5
-                        curl -f http://localhost:8080/api/v1/employee/health
-                    """
+                        echo "🔎 Listing pods and services..."
+                        sh "kubectl get pods -o wide"
+                        sh "kubectl get svc"
+                        sh "kubectl get ingress"
+
+                        echo "🚀 Running internal smoke test..."
+                        def podIP = sh(
+                            script: "kubectl get pod -l app=employee-api -o jsonpath='{.items[0].status.podIP}'",
+                            returnStdout: true
+                        ).trim()
+
+                        if (podIP) {
+                            def url = "http://${podIP}:8080/api/v1/employee/health"
+                            echo "💻 Health check URL: ${url}"
+                            sh """
+                                for i in {1..6}; do
+                                    curl -sf ${url} && break || sleep 10
+                                done
+                            """
+                        } else {
+                            echo "⚠️ No pods found to test health endpoint."
+                        }
+                    }
                 }
             }
         }
@@ -186,34 +166,6 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 
     post {
         always {
-            script {
-                try {
-                    def userChoice = input(
-                        id: 'DestroyApproval',
-                        message: "⚠️ Do you want to destroy all Terraform resources?",
-                        parameters: [choice(name: 'ACTION', choices: ['Destroy', 'Keep Infra'], description: 'Select action')]
-                    )
-                    if (userChoice == 'Destroy') {
-                        echo "⚡ Destroying Terraform-managed infrastructure..."
-                        withCredentials([
-                            string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                            string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
-                        ]) {
-                            dir("${TERRAFORM_DIR}") {
-                                sh """
-                                    export AWS_DEFAULT_REGION=${AWS_REGION}
-                                    terraform init
-                                    terraform destroy -auto-approve -var-file=terraform.tfvars || true
-                                """
-                            }
-                        }
-                    } else {
-                        echo "✅ Keeping infrastructure as is."
-                    }
-                } catch(err) {
-                    echo "⏩ Skipping destroy prompt."
-                }
-            }
             echo "🧹 Cleaning workspace..."
             cleanWs()
         }
