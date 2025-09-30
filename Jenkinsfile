@@ -11,6 +11,7 @@ pipeline {
         K8S_DIR         = "k8s"
         CLUSTER_VERSION = "1.28"
         AWS_REGION      = "us-east-1"
+        KUBECONFIG      = "/var/lib/jenkins/.kube/config"
     }
 
     stages {
@@ -105,18 +106,22 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                         sh """
                             export AWS_DEFAULT_REGION=${AWS_REGION}
                             echo "🔧 Configuring kubeconfig for cluster: ${clusterName}"
-                            aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
+                            mkdir -p \$(dirname ${KUBECONFIG})
+                            aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION} --kubeconfig ${KUBECONFIG}
 
                             echo "🚀 Deploying manifests to Kubernetes..."
-                            kubectl apply -f "${K8S_DIR}/deployment.yaml"
-                            kubectl apply -f "${K8S_DIR}/service.yaml"
-                            kubectl apply -f "${K8S_DIR}/ingress.yaml" || true
+                            kubectl --kubeconfig=${KUBECONFIG} apply -f "${K8S_DIR}/deployment.yaml"
+                            kubectl --kubeconfig=${KUBECONFIG} apply -f "${K8S_DIR}/service.yaml"
+                            kubectl --kubeconfig=${KUBECONFIG} apply -f "${K8S_DIR}/ingress.yaml" || true
 
                             echo "⏳ Waiting for rollout..."
-                            kubectl rollout status deployment/employee-api --timeout=300s
+                            kubectl --kubeconfig=${KUBECONFIG} rollout status deployment/employee-api --timeout=300s
 
                             echo "✅ Ensuring pods are ready..."
-                            kubectl wait --for=condition=ready pod -l app=employee-api --timeout=300s
+                            kubectl --kubeconfig=${KUBECONFIG} wait --for=condition=ready pod -l app=employee-api --timeout=300s
+
+                            echo "📜 Pod logs for debug..."
+                            kubectl --kubeconfig=${KUBECONFIG} logs -l app=employee-api --tail=50 || true
                         """
                     }
                 }
@@ -133,17 +138,17 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                         def clusterName = readFile('cluster_name.txt').trim()
                         sh """
                             export AWS_DEFAULT_REGION=${AWS_REGION}
-                            aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION}
+                            aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION} --kubeconfig ${KUBECONFIG}
                         """
 
                         echo "🔎 Listing pods and services..."
-                        sh "kubectl get pods -o wide"
-                        sh "kubectl get svc"
-                        sh "kubectl get ingress"
+                        sh "kubectl --kubeconfig=${KUBECONFIG} get pods -o wide"
+                        sh "kubectl --kubeconfig=${KUBECONFIG} get svc"
+                        sh "kubectl --kubeconfig=${KUBECONFIG} get ingress"
 
                         echo "🚀 Running internal smoke test..."
                         def podIP = sh(
-                            script: "kubectl get pod -l app=employee-api -o jsonpath='{.items[0].status.podIP}'",
+                            script: "kubectl --kubeconfig=${KUBECONFIG} get pod -l app=employee-api -o jsonpath='{.items[0].status.podIP}'",
                             returnStdout: true
                         ).trim()
 
