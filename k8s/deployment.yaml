@@ -1,11 +1,148 @@
+---
+# -------------------------------
+# Scylla Deployment + Service
+# -------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scylla
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scylla
+  template:
+    metadata:
+      labels:
+        app: scylla
+    spec:
+      containers:
+        - name: scylla
+          image: scylladb/scylla:5.4
+          command: ["scylla", "--smp", "1", "--memory", "750M", "--overprovisioned", "1"]
+          ports:
+            - containerPort: 9042
+          readinessProbe:
+            exec:
+              command: ["cqlsh", "-e", "DESCRIBE KEYSPACES"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+          volumeMounts:
+            - name: scylla-data
+              mountPath: /var/lib/scylla
+      volumes:
+        - name: scylla-data
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scylla-service
+spec:
+  selector:
+    app: scylla
+  ports:
+    - port: 9042
+      targetPort: 9042
+  type: ClusterIP
+
+---
+# -------------------------------
+# Redis Deployment + Service
+# -------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+  type: ClusterIP
+
+---
+# -------------------------------
+# Migrate Job (Scylla migrations)
+# -------------------------------
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+spec:
+  template:
+    spec:
+      containers:
+        - name: migrate
+          image: cassandra:4.1
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Waiting for Scylla..."
+              until cqlsh scylla-service -e 'DESCRIBE KEYSPACES' > /dev/null 2>&1; do
+                echo "Scylla not ready, retrying..."
+                sleep 5
+              done
+              echo "Creating keyspace if missing..."
+              cqlsh scylla-service -e "CREATE KEYSPACE IF NOT EXISTS employee_db WITH replication = {'class':'SimpleStrategy','replication_factor':1};"
+              echo "Running migrations..."
+              for f in /migrations/*.cql; do
+                [ -e "$f" ] || continue
+                echo "Applying $f..."
+                cqlsh scylla-service -f "$f"
+              done
+              echo "Migrations completed."
+          volumeMounts:
+            - name: migrate-scripts
+              mountPath: /migrations
+      restartPolicy: OnFailure
+      volumes:
+        - name: migrate-scripts
+          configMap:
+            name: migrate-scripts
+
+---
+# -------------------------------
+# Employee API Deployment + Service
+# -------------------------------
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: employee-api
-  labels:
-    app: employee-api
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: employee-api
@@ -14,16 +151,9 @@ spec:
       labels:
         app: employee-api
     spec:
-      initContainers:
-        - name: wait-for-scylla
-          image: busybox:1.36
-          command: ['sh', '-c', 'until nc -z scylla-service 9042; do echo waiting for scylla; sleep 5; done']
-        - name: wait-for-redis
-          image: busybox:1.36
-          command: ['sh', '-c', 'until nc -z redis-service 6379; do echo waiting for redis; sleep 5; done']
       containers:
         - name: employee-api
-          image: himanshu085/employee-api:48  # Update with correct image tag
+          image: himanshu085/employee-api:latest
           ports:
             - containerPort: 8080
           env:
@@ -41,17 +171,39 @@ spec:
             httpGet:
               path: /api/v1/employee/health
               port: 8080
-              scheme: HTTP
             initialDelaySeconds: 30
             periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /api/v1/employee/health
               port: 8080
-              scheme: HTTP
             initialDelaySeconds: 60
             periodSeconds: 15
-            timeoutSeconds: 3
-            failureThreshold: 5
+      initContainers:
+        - name: wait-for-scylla
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z scylla-service 9042; do echo waiting for scylla; sleep 5; done
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z redis-service 6379; do echo waiting for redis; sleep 5; done
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: employee-api-svc
+spec:
+  selector:
+    app: employee-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: LoadBalancer
