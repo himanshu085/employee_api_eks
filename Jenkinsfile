@@ -49,11 +49,11 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: "${DOCKER_CRED}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker build -t ${DOCKER_IMAGE} .
-                        docker tag ${DOCKER_IMAGE} ${DOCKER_REGISTRY}:${BUILD_NUMBER}
-                        docker tag ${DOCKER_IMAGE} ${DOCKER_REGISTRY}:latest
-                        docker push ${DOCKER_REGISTRY}:${BUILD_NUMBER}
-                        docker push ${DOCKER_REGISTRY}:latest
+                        docker build -t $DOCKER_IMAGE .
+                        docker tag $DOCKER_IMAGE $DOCKER_REGISTRY:$BUILD_NUMBER
+                        docker tag $DOCKER_IMAGE $DOCKER_REGISTRY:latest
+                        docker push $DOCKER_REGISTRY:$BUILD_NUMBER
+                        docker push $DOCKER_REGISTRY:latest
                     '''
                 }
             }
@@ -76,7 +76,7 @@ cluster_version      = "${CLUSTER_VERSION}"
 app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
 """
                         sh """
-                            export AWS_DEFAULT_REGION=${AWS_REGION}
+                            export AWS_DEFAULT_REGION=$AWS_REGION
                             terraform init
                             terraform apply -auto-approve -var-file=terraform.tfvars
                             terraform output -raw eks_cluster_name > ../cluster_name.txt
@@ -103,36 +103,26 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                 ]) {
                     script {
                         def clusterName = readFile('cluster_name.txt').trim()
-                        sh """
-                            export AWS_DEFAULT_REGION=${AWS_REGION}
-                            echo "🔧 Configuring kubeconfig for cluster: ${clusterName}"
-                            mkdir -p \$(dirname ${KUBECONFIG})
-                            aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION} --kubeconfig ${KUBECONFIG}
+                        sh '''
+                            export AWS_DEFAULT_REGION=$AWS_REGION
+                            echo "🔧 Configuring kubeconfig for cluster: '${clusterName}'"
+                            mkdir -p $(dirname $KUBECONFIG)
+                            aws eks update-kubeconfig --name ''' + clusterName + ''' --region $AWS_REGION --kubeconfig $KUBECONFIG
 
                             echo "🚀 Deploying manifests to Kubernetes..."
-                            kubectl --kubeconfig=${KUBECONFIG} apply -f "${K8S_DIR}/deployment.yaml"
-                            kubectl --kubeconfig=${KUBECONFIG} apply -f "${K8S_DIR}/service.yaml"
-                            kubectl --kubeconfig=${KUBECONFIG} apply -f "${K8S_DIR}/ingress.yaml" || true
+                            kubectl --kubeconfig=$KUBECONFIG apply -f k8s/deployment.yaml
+                            kubectl --kubeconfig=$KUBECONFIG apply -f k8s/service.yaml
+                            kubectl --kubeconfig=$KUBECONFIG apply -f k8s/ingress.yaml || true
 
                             echo "⏳ Waiting for rollout..."
-                            set +e
-                            kubectl --kubeconfig=${KUBECONFIG} rollout status deployment/employee-api --timeout=300s
-                            ROLL_OUT_STATUS=$?
-                            set -e
+                            kubectl --kubeconfig=$KUBECONFIG rollout status deployment/employee-api --timeout=300s
 
-                            if [ \$ROLL_OUT_STATUS -ne 0 ]; then
-                                echo "❌ Rollout failed! Collecting debug info..."
-                                kubectl --kubeconfig=${KUBECONFIG} get pods -l app=employee-api -o wide
-                                kubectl --kubeconfig=${KUBECONFIG} describe pod -l app=employee-api || true
-                                kubectl --kubeconfig=${KUBECONFIG} logs -l app=employee-api --tail=100 || true
-                                exit 1
-                            else
-                                echo "✅ Rollout succeeded!"
-                                kubectl --kubeconfig=${KUBECONFIG} wait --for=condition=ready pod -l app=employee-api --timeout=300s
-                                echo "📜 Recent pod logs..."
-                                kubectl --kubeconfig=${KUBECONFIG} logs -l app=employee-api --tail=50 || true
-                            fi
-                        """
+                            echo "✅ Ensuring pods are ready..."
+                            kubectl --kubeconfig=$KUBECONFIG wait --for=condition=ready pod -l app=employee-api --timeout=300s
+
+                            echo "📜 Pod logs for debug..."
+                            kubectl --kubeconfig=$KUBECONFIG logs -l app=employee-api --tail=50 || true
+                        '''
                     }
                 }
             }
@@ -146,19 +136,19 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                 ]) {
                     script {
                         def clusterName = readFile('cluster_name.txt').trim()
-                        sh """
-                            export AWS_DEFAULT_REGION=${AWS_REGION}
-                            aws eks update-kubeconfig --name ${clusterName} --region ${AWS_REGION} --kubeconfig ${KUBECONFIG}
-                        """
+                        sh '''
+                            export AWS_DEFAULT_REGION=$AWS_REGION
+                            aws eks update-kubeconfig --name ''' + clusterName + ''' --region $AWS_REGION --kubeconfig $KUBECONFIG
+                        '''
 
                         echo "🔎 Listing pods and services..."
-                        sh "kubectl --kubeconfig=${KUBECONFIG} get pods -o wide"
-                        sh "kubectl --kubeconfig=${KUBECONFIG} get svc"
-                        sh "kubectl --kubeconfig=${KUBECONFIG} get ingress"
+                        sh "kubectl --kubeconfig=$KUBECONFIG get pods -o wide"
+                        sh "kubectl --kubeconfig=$KUBECONFIG get svc"
+                        sh "kubectl --kubeconfig=$KUBECONFIG get ingress"
 
                         echo "🚀 Running internal smoke test..."
                         def podIP = sh(
-                            script: "kubectl --kubeconfig=${KUBECONFIG} get pod -l app=employee-api -o jsonpath='{.items[0].status.podIP}'",
+                            script: "kubectl --kubeconfig=$KUBECONFIG get pod -l app=employee-api -o jsonpath='{.items[0].status.podIP}'",
                             returnStdout: true
                         ).trim()
 
@@ -195,11 +185,11 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
                         ]) {
                             dir("${TERRAFORM_DIR}") {
-                                sh """
-                                    export AWS_DEFAULT_REGION=${AWS_REGION}
+                                sh '''
+                                    export AWS_DEFAULT_REGION=$AWS_REGION
                                     terraform init
                                     terraform destroy -auto-approve -var-file=terraform.tfvars || true
-                                """
+                                '''
                             }
                         }
                     } else {
