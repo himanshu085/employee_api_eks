@@ -79,7 +79,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             export AWS_DEFAULT_REGION=$AWS_REGION
                             terraform init
                             terraform apply -auto-approve -var-file=terraform.tfvars
-                            terraform output -raw eks_cluster_name > ../cluster_name.txt
+                            terraform output -raw eks_cluster_name > ${WORKSPACE}/cluster_name.txt
                         """
                     }
                 }
@@ -102,37 +102,27 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                     string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
                     script {
-                        def clusterName = readFile('cluster_name.txt').trim()
-                        sh '''
+                        def clusterName = readFile("${WORKSPACE}/cluster_name.txt").trim()
+                        echo "🔧 Cluster Name: ${clusterName}"
+                        sh """
                             export AWS_DEFAULT_REGION=$AWS_REGION
-                            echo "🔧 Configuring kubeconfig for cluster: '${clusterName}'"
-                            mkdir -p $(dirname $KUBECONFIG)
+                            mkdir -p \$(dirname $KUBECONFIG)
                             aws eks update-kubeconfig --name ${clusterName} --region $AWS_REGION --kubeconfig $KUBECONFIG
 
                             echo "🚀 Deploying manifests to Kubernetes..."
-                            kubectl --kubeconfig=$KUBECONFIG apply -f k8s/deployment.yaml
-                            kubectl --kubeconfig=$KUBECONFIG apply -f k8s/service.yaml
-                            kubectl --kubeconfig=$KUBECONFIG apply -f k8s/ingress.yaml || true
+                            kubectl --kubeconfig=$KUBECONFIG apply -f ${K8S_DIR}/deployment.yaml
+                            kubectl --kubeconfig=$KUBECONFIG apply -f ${K8S_DIR}/service.yaml
+                            kubectl --kubeconfig=$KUBECONFIG apply -f ${K8S_DIR}/ingress.yaml || true
 
                             echo "⏳ Waiting for rollout..."
-                            set +e
                             kubectl --kubeconfig=$KUBECONFIG rollout status deployment/employee-api --timeout=300s
-                            ROLL_STATUS=$?
-                            set -e
 
-                            if [ $ROLL_STATUS -ne 0 ]; then
-                                echo "❌ Rollout failed! Collecting debug info..."
-                                kubectl --kubeconfig=$KUBECONFIG get pods -l app=employee-api -o wide
-                                kubectl --kubeconfig=$KUBECONFIG describe pod -l app=employee-api || true
-                                kubectl --kubeconfig=$KUBECONFIG logs -l app=employee-api --tail=100 || true
-                                exit 1
-                            else
-                                echo "✅ Rollout succeeded!"
-                                kubectl --kubeconfig=$KUBECONFIG wait --for=condition=ready pod -l app=employee-api --timeout=300s
-                                echo "📜 Pod logs (last 50 lines)..."
-                                kubectl --kubeconfig=$KUBECONFIG logs -l app=employee-api --tail=50 || true
-                            fi
-                        '''
+                            echo "✅ Ensuring pods are ready..."
+                            kubectl --kubeconfig=$KUBECONFIG wait --for=condition=ready pod -l app=employee-api --timeout=300s
+
+                            echo "📜 Pod logs for debug..."
+                            kubectl --kubeconfig=$KUBECONFIG logs -l app=employee-api --tail=50 || true
+                        """
                     }
                 }
             }
@@ -145,11 +135,12 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                     string(credentialsId: 'aws_secret_access_key', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
                     script {
-                        def clusterName = readFile('cluster_name.txt').trim()
-                        sh '''
+                        def clusterName = readFile("${WORKSPACE}/cluster_name.txt").trim()
+                        echo "🔧 Cluster Name for Validation: ${clusterName}"
+                        sh """
                             export AWS_DEFAULT_REGION=$AWS_REGION
                             aws eks update-kubeconfig --name ${clusterName} --region $AWS_REGION --kubeconfig $KUBECONFIG
-                        '''
+                        """
 
                         echo "🔎 Listing pods and services..."
                         sh "kubectl --kubeconfig=$KUBECONFIG get pods -o wide"
@@ -172,7 +163,6 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             """
                         } else {
                             echo "⚠️ No pods found to test health endpoint."
-                            sh "kubectl --kubeconfig=$KUBECONFIG describe deployment employee-api || true"
                         }
                     }
                 }
