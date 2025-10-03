@@ -104,30 +104,31 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                     script {
                         def clusterName = readFile('cluster_name.txt').trim()
                         echo "🔧 Cluster Name: ${clusterName}"
+
                         sh """
                             export AWS_DEFAULT_REGION=$AWS_REGION
                             mkdir -p \$(dirname $KUBECONFIG)
                             aws eks update-kubeconfig --name ${clusterName} --region $AWS_REGION --kubeconfig $KUBECONFIG
 
-                            echo "🚀 Deploying manifests to Kubernetes..."
-                            kubectl --kubeconfig=$KUBECONFIG apply -f ${K8S_DIR}/deployment.yaml
-                            kubectl --kubeconfig=$KUBECONFIG apply -f ${K8S_DIR}/service.yaml
-                            kubectl --kubeconfig=$KUBECONFIG apply -f ${K8S_DIR}/ingress.yaml || true
+                            echo "⏳ Waiting for Redis and Scylla to be ready..."
+                            kubectl --kubeconfig=$KUBECONFIG wait --for=condition=ready pod -l app=redis --timeout=300s
+                            kubectl --kubeconfig=$KUBECONFIG wait --for=condition=ready pod -l app=scylla --timeout=300s
 
-                            echo "⏳ Waiting for rollout..."
-                            if ! kubectl --kubeconfig=$KUBECONFIG rollout status deployment/employee-api --timeout=300s; then
-                                echo "⚠️ Rollout failed, dumping pod details and events for debugging"
+                            echo "🚀 Deploying Employee API manifests..."
+                            kubectl --kubeconfig=$KUBECONFIG apply -f k8s/deployment.yaml
+                            kubectl --kubeconfig=$KUBECONFIG apply -f k8s/service.yaml
+                            kubectl --kubeconfig=$KUBECONFIG apply -f k8s/ingress.yaml || true
+
+                            echo "⏳ Waiting for Employee API rollout..."
+                            if ! kubectl --kubeconfig=$KUBECONFIG rollout status deployment/employee-api --timeout=600s; then
+                                echo "⚠️ Rollout failed, dumping pod info..."
                                 kubectl --kubeconfig=$KUBECONFIG get pods -o wide
                                 kubectl --kubeconfig=$KUBECONFIG describe pods -l app=employee-api
                                 kubectl --kubeconfig=$KUBECONFIG logs -l app=employee-api --tail=100 || true
                                 exit 1
                             fi
 
-                            echo "✅ Ensuring pods are ready..."
-                            kubectl --kubeconfig=$KUBECONFIG wait --for=condition=ready pod -l app=employee-api --timeout=300s
-
-                            echo "📜 Pod logs for debug..."
-                            kubectl --kubeconfig=$KUBECONFIG logs -l app=employee-api --tail=50 || true
+                            echo "✅ Employee API pods ready."
                         """
                     }
                 }
@@ -147,12 +148,12 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             aws eks update-kubeconfig --name ${clusterName} --region $AWS_REGION --kubeconfig $KUBECONFIG
                         """
 
-                        echo "🔎 Listing pods and services..."
+                        echo "🔎 Listing pods, services, and ingress..."
                         sh "kubectl --kubeconfig=$KUBECONFIG get pods -o wide"
                         sh "kubectl --kubeconfig=$KUBECONFIG get svc"
                         sh "kubectl --kubeconfig=$KUBECONFIG get ingress"
 
-                        echo "🚀 Running internal smoke test..."
+                        echo "🚀 Running internal health check..."
                         def podIP = sh(
                             script: "kubectl --kubeconfig=$KUBECONFIG get pod -l app=employee-api -o jsonpath='{.items[0].status.podIP}'",
                             returnStdout: true
@@ -167,7 +168,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                                 done
                             """
                         } else {
-                            echo "⚠️ No pods found to test health endpoint."
+                            echo "⚠️ No Employee API pods found for health check."
                         }
                     }
                 }
