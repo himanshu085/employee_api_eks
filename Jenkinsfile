@@ -9,7 +9,7 @@ pipeline {
         DOCKER_CRED     = "docker-hub-credentials"
         TERRAFORM_DIR   = "terraform"
         K8S_DIR         = "k8s"
-        CLUSTER_VERSION = "1.28"
+        CLUSTER_VERSION = "1.29"
         AWS_REGION      = "us-east-1"
         KUBECONFIG      = "/var/lib/jenkins/.kube/config"
     }
