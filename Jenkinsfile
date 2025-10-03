@@ -115,13 +115,23 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             kubectl --kubeconfig=${KUBECONFIG} apply -f "${K8S_DIR}/ingress.yaml" || true
 
                             echo "⏳ Waiting for rollout..."
+                            set +e
                             kubectl --kubeconfig=${KUBECONFIG} rollout status deployment/employee-api --timeout=300s
+                            ROLL_OUT_STATUS=$?
+                            set -e
 
-                            echo "✅ Ensuring pods are ready..."
-                            kubectl --kubeconfig=${KUBECONFIG} wait --for=condition=ready pod -l app=employee-api --timeout=300s
-
-                            echo "📜 Pod logs for debug..."
-                            kubectl --kubeconfig=${KUBECONFIG} logs -l app=employee-api --tail=50 || true
+                            if [ \$ROLL_OUT_STATUS -ne 0 ]; then
+                                echo "❌ Rollout failed! Collecting debug info..."
+                                kubectl --kubeconfig=${KUBECONFIG} get pods -l app=employee-api -o wide
+                                kubectl --kubeconfig=${KUBECONFIG} describe pod -l app=employee-api || true
+                                kubectl --kubeconfig=${KUBECONFIG} logs -l app=employee-api --tail=100 || true
+                                exit 1
+                            else
+                                echo "✅ Rollout succeeded!"
+                                kubectl --kubeconfig=${KUBECONFIG} wait --for=condition=ready pod -l app=employee-api --timeout=300s
+                                echo "📜 Recent pod logs..."
+                                kubectl --kubeconfig=${KUBECONFIG} logs -l app=employee-api --tail=50 || true
+                            fi
                         """
                     }
                 }
