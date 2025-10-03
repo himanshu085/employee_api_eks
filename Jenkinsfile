@@ -107,7 +107,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             export AWS_DEFAULT_REGION=$AWS_REGION
                             echo "🔧 Configuring kubeconfig for cluster: '${clusterName}'"
                             mkdir -p $(dirname $KUBECONFIG)
-                            aws eks update-kubeconfig --name ''' + clusterName + ''' --region $AWS_REGION --kubeconfig $KUBECONFIG
+                            aws eks update-kubeconfig --name ${clusterName} --region $AWS_REGION --kubeconfig $KUBECONFIG
 
                             echo "🚀 Deploying manifests to Kubernetes..."
                             kubectl --kubeconfig=$KUBECONFIG apply -f k8s/deployment.yaml
@@ -115,13 +115,23 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             kubectl --kubeconfig=$KUBECONFIG apply -f k8s/ingress.yaml || true
 
                             echo "⏳ Waiting for rollout..."
+                            set +e
                             kubectl --kubeconfig=$KUBECONFIG rollout status deployment/employee-api --timeout=300s
+                            ROLL_STATUS=$?
+                            set -e
 
-                            echo "✅ Ensuring pods are ready..."
-                            kubectl --kubeconfig=$KUBECONFIG wait --for=condition=ready pod -l app=employee-api --timeout=300s
-
-                            echo "📜 Pod logs for debug..."
-                            kubectl --kubeconfig=$KUBECONFIG logs -l app=employee-api --tail=50 || true
+                            if [ $ROLL_STATUS -ne 0 ]; then
+                                echo "❌ Rollout failed! Collecting debug info..."
+                                kubectl --kubeconfig=$KUBECONFIG get pods -l app=employee-api -o wide
+                                kubectl --kubeconfig=$KUBECONFIG describe pod -l app=employee-api || true
+                                kubectl --kubeconfig=$KUBECONFIG logs -l app=employee-api --tail=100 || true
+                                exit 1
+                            else
+                                echo "✅ Rollout succeeded!"
+                                kubectl --kubeconfig=$KUBECONFIG wait --for=condition=ready pod -l app=employee-api --timeout=300s
+                                echo "📜 Pod logs (last 50 lines)..."
+                                kubectl --kubeconfig=$KUBECONFIG logs -l app=employee-api --tail=50 || true
+                            fi
                         '''
                     }
                 }
@@ -138,7 +148,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                         def clusterName = readFile('cluster_name.txt').trim()
                         sh '''
                             export AWS_DEFAULT_REGION=$AWS_REGION
-                            aws eks update-kubeconfig --name ''' + clusterName + ''' --region $AWS_REGION --kubeconfig $KUBECONFIG
+                            aws eks update-kubeconfig --name ${clusterName} --region $AWS_REGION --kubeconfig $KUBECONFIG
                         '''
 
                         echo "🔎 Listing pods and services..."
@@ -162,6 +172,7 @@ app_image            = "${DOCKER_REGISTRY}:${BUILD_NUMBER}"
                             """
                         } else {
                             echo "⚠️ No pods found to test health endpoint."
+                            sh "kubectl --kubeconfig=$KUBECONFIG describe deployment employee-api || true"
                         }
                     }
                 }
